@@ -84,12 +84,40 @@ create index if not exists idx_messages_conversation on messages (conversation_i
 create index if not exists idx_invite_requests_org_status on invite_requests (organization_id, status);
 create index if not exists idx_organizations_invite_code on organizations (invite_code);
 
--- Create IVFFlat cosine index if enough rows exist (or fall back to HNSW if supported)
+-- Create IVFFlat/HNSW cosine index if supported
 create index if not exists idx_document_chunks_embedding 
   on document_chunks using hnsw (embedding vector_cosine_ops);
 
 -- ==============================================================================
--- Row-Level Security (RLS)
+-- SECURITY DEFINER RLS HELPER FUNCTIONS
+-- ==============================================================================
+-- These functions execute as SECURITY DEFINER to bypass RLS recursion when
+-- inspecting profiles for organization_id or role.
+create or replace function public.get_auth_user_organization_id()
+returns uuid
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select organization_id from public.profiles where id = auth.uid() limit 1;
+$$;
+
+create or replace function public.get_auth_user_role()
+returns text
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select role from public.profiles where id = auth.uid() limit 1;
+$$;
+
+grant execute on function public.get_auth_user_organization_id() to authenticated, service_role;
+grant execute on function public.get_auth_user_role() to authenticated, service_role;
+
+-- ==============================================================================
+-- Row-Level Security (RLS) Policies
 -- ==============================================================================
 alter table organizations enable row level security;
 alter table profiles enable row level security;
@@ -100,6 +128,9 @@ alter table conversations enable row level security;
 alter table messages enable row level security;
 
 -- Organizations policies
+drop policy if exists "allow public read org by invite code" on organizations;
+drop policy if exists "allow authenticated coach create org" on organizations;
+
 create policy "allow public read org by invite code" on organizations
   for select using (true);
 
@@ -107,13 +138,18 @@ create policy "allow authenticated coach create org" on organizations
   for insert with check (auth.role() = 'authenticated');
 
 -- Profiles policies
+drop policy if exists "own profile" on profiles;
+drop policy if exists "admin read org profiles" on profiles;
+drop policy if exists "users can insert own profile" on profiles;
+drop policy if exists "users can update own profile" on profiles;
+
 create policy "own profile" on profiles
   for select using (id = auth.uid());
 
 create policy "admin read org profiles" on profiles
   for select using (
-    organization_id = (select organization_id from profiles where id = auth.uid())
-    and (select role from profiles p2 where p2.id = auth.uid()) = 'admin'
+    organization_id = public.get_auth_user_organization_id()
+    and public.get_auth_user_role() = 'admin'
   );
 
 create policy "users can insert own profile" on profiles
@@ -123,58 +159,73 @@ create policy "users can update own profile" on profiles
   for update using (id = auth.uid());
 
 -- Conversations: strictly owner-only
+drop policy if exists "own conversations" on conversations;
+
 create policy "own conversations" on conversations
   for all using (user_id = auth.uid());
 
 -- Messages: only via an owned conversation
+drop policy if exists "own messages" on messages;
+
 create policy "own messages" on messages
   for all using (
     conversation_id in (select id from conversations where user_id = auth.uid())
   );
 
 -- Documents: readable by anyone in the same org
+drop policy if exists "org read documents" on documents;
+drop policy if exists "admin write documents" on documents;
+drop policy if exists "admin update documents" on documents;
+drop policy if exists "admin delete documents" on documents;
+
 create policy "org read documents" on documents
   for select using (
-    organization_id = (select organization_id from profiles where id = auth.uid())
+    organization_id = public.get_auth_user_organization_id()
   );
 
--- Documents: only admins can insert/update/delete
 create policy "admin write documents" on documents
   for insert with check (
-    (select role from profiles where id = auth.uid()) = 'admin'
+    public.get_auth_user_role() = 'admin'
   );
 
 create policy "admin update documents" on documents
   for update using (
-    (select role from profiles where id = auth.uid()) = 'admin'
+    public.get_auth_user_role() = 'admin'
   );
 
 create policy "admin delete documents" on documents
   for delete using (
-    (select role from profiles where id = auth.uid()) = 'admin'
+    public.get_auth_user_role() = 'admin'
   );
 
 -- Document chunks: same org-read / admin-write pattern
+drop policy if exists "org read chunks" on document_chunks;
+drop policy if exists "admin write chunks" on document_chunks;
+drop policy if exists "admin delete chunks" on document_chunks;
+
 create policy "org read chunks" on document_chunks
   for select using (
-    organization_id = (select organization_id from profiles where id = auth.uid())
+    organization_id = public.get_auth_user_organization_id()
   );
 
 create policy "admin write chunks" on document_chunks
   for insert with check (
-    (select role from profiles where id = auth.uid()) = 'admin'
+    public.get_auth_user_role() = 'admin'
   );
 
 create policy "admin delete chunks" on document_chunks
   for delete using (
-    (select role from profiles where id = auth.uid()) = 'admin'
+    public.get_auth_user_role() = 'admin'
   );
 
 -- Invite requests: admins can manage; allow prospective member insert
+drop policy if exists "admin manage invites" on invite_requests;
+drop policy if exists "allow insert invite request" on invite_requests;
+
 create policy "admin manage invites" on invite_requests
   for all using (
-    organization_id = (select organization_id from profiles where id = auth.uid())
-    and (select role from profiles where id = auth.uid()) = 'admin'
+    organization_id = public.get_auth_user_organization_id()
+    and public.get_auth_user_role() = 'admin'
   );
 
 create policy "allow insert invite request" on invite_requests
@@ -212,29 +263,9 @@ as $$
 $$;
 
 -- ==============================================================================
--- Supabase Storage Bucket Setup
--- ==============================================================================
-insert into storage.buckets (id, name, public)
-values ('coach-documents', 'coach-documents', false)
-on conflict (id) do nothing;
-
-create policy "authenticated download coach documents"
-  on storage.objects for select
-  using (bucket_id = 'coach-documents' and auth.role() = 'authenticated');
-
-create policy "admin upload coach documents"
-  on storage.objects for insert
-  with check (bucket_id = 'coach-documents' and auth.role() = 'authenticated');
-
-create policy "admin delete coach documents"
-  on storage.objects for delete
-  using (bucket_id = 'coach-documents' and auth.role() = 'authenticated');
-
--- ==============================================================================
 -- Table & Schema Permissions (Grant to service_role, authenticated, anon)
 -- ==============================================================================
 grant usage on schema public to anon, authenticated, service_role;
-
 grant all on all tables in schema public to postgres, anon, authenticated, service_role;
 grant all on all sequences in schema public to postgres, anon, authenticated, service_role;
 grant all on all routines in schema public to postgres, anon, authenticated, service_role;
@@ -242,4 +273,3 @@ grant all on all routines in schema public to postgres, anon, authenticated, ser
 alter default privileges in schema public grant all on tables to postgres, anon, authenticated, service_role;
 alter default privileges in schema public grant all on sequences to postgres, anon, authenticated, service_role;
 alter default privileges in schema public grant all on routines to postgres, anon, authenticated, service_role;
-

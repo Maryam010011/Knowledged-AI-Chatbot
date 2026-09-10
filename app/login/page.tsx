@@ -30,32 +30,69 @@ export default function LoginPage() {
             emailRedirectTo: `${window.location.origin}/auth/callback`,
           },
         });
-        if (otpError) throw otpError;
+        if (otpError) {
+          throw new Error(`Error sending magic link email: ${otpError.message}. Please use password sign-in instead.`);
+        }
         setMagicLinkSent(true);
         return;
       }
 
       // Password sign-in
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password,
       });
 
       if (signInError) throw signInError;
+      if (!data.user) throw new Error('Sign-in failed. No user returned.');
 
       // Check user profile role
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('role, organization_id')
         .eq('id', data.user.id)
         .single();
 
+      if (profileError) {
+        console.error('Profile fetch error during login:', profileError);
+      }
+
       if (profile?.role === 'admin') {
         router.push('/admin');
       } else if (profile?.role === 'member') {
-        router.push('/chat');
+        // Check invite request status for member
+        const { data: req } = await supabase
+          .from('invite_requests')
+          .select('status')
+          .eq('email', data.user.email?.toLowerCase())
+          .order('requested_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (req?.status === 'accepted' || profile.organization_id) {
+          router.push('/chat');
+        } else {
+          router.push(`/waiting?email=${encodeURIComponent(data.user.email || '')}`);
+        }
       } else {
-        router.push('/waiting');
+        // Fallback: check if user has a pending invite request
+        const { data: req } = await supabase
+          .from('invite_requests')
+          .select('status')
+          .eq('email', data.user.email?.toLowerCase())
+          .order('requested_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (req?.status === 'accepted') {
+          router.push('/chat');
+        } else if (req?.status === 'pending') {
+          router.push(`/waiting?email=${encodeURIComponent(data.user.email || '')}`);
+        } else if (profileError) {
+          setError(`Authentication succeeded, but failed to load user profile (${profileError.message}). Please contact support.`);
+        } else {
+          router.push(`/waiting?email=${encodeURIComponent(data.user.email || '')}`);
+        }
       }
     } catch (err: any) {
       setError(err.message || 'Failed to sign in');
@@ -97,7 +134,7 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => setMagicLinkSent(false)}
-                className="mt-6 text-xs text-emerald-400 hover:underline"
+                className="mt-6 text-xs text-emerald-400 hover:underline cursor-pointer"
               >
                 Use a different email or password
               </button>
@@ -127,7 +164,7 @@ export default function LoginPage() {
                     <button
                       type="button"
                       onClick={() => setIsMagicLink(true)}
-                      className="text-xs text-emerald-400 hover:underline"
+                      className="text-xs text-emerald-400 hover:underline cursor-pointer"
                     >
                       Sign in with Magic Link instead
                     </button>
@@ -148,7 +185,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setIsMagicLink(false)}
-                    className="text-xs text-emerald-400 hover:underline"
+                    className="text-xs text-emerald-400 hover:underline cursor-pointer"
                   >
                     Sign in with Password instead
                   </button>
