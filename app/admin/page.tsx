@@ -148,7 +148,7 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // PDF Upload
+  // PDF Upload — Direct Storage Architecture (supports files up to 50MB)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -158,22 +158,51 @@ export default function AdminDashboardPage() {
       return;
     }
 
-    const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5MB Vercel serverless request body limit
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB limit
     if (file.size > MAX_FILE_SIZE) {
-      setUploadError('File size exceeds the 4.5MB upload limit. Please upload a smaller PDF document.');
+      setUploadError('File size exceeds the 50MB upload limit. Please upload a smaller PDF document.');
       return;
     }
 
     setUploading(true);
     setUploadError(null);
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        throw new Error('Authentication lost. Please log in again.');
+      }
+
+      const orgId = coachProfile?.organization_id || organization?.id;
+      if (!orgId) {
+        throw new Error('Organization details not loaded. Please refresh the page.');
+      }
+
+      const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `${orgId}/${Date.now()}_${sanitizedName}`;
+
+      // 1. Direct Upload to Supabase Storage (Bypasses Vercel 4.5MB payload limit up to 50MB)
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from('coach-documents')
+        .upload(storagePath, file, {
+          contentType: 'application/pdf',
+          upsert: true,
+        });
+
+      if (uploadErr) {
+        throw new Error(`Storage Upload Error: ${uploadErr.message}`);
+      }
+
+      // 2. Trigger Server Ingestion via JSON Payload (~200 bytes)
       const res = await fetch('/api/documents/upload', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          storagePath: uploadData?.path || storagePath,
+          title: file.name,
+        }),
       });
 
       const contentType = res.headers.get('content-type') || '';
@@ -182,11 +211,7 @@ export default function AdminDashboardPage() {
         data = await res.json();
       } else {
         const text = await res.text();
-        throw new Error(
-          res.status === 413
-            ? 'File size exceeds the 4.5MB server upload limit.'
-            : text || `Upload failed (HTTP ${res.status})`
-        );
+        throw new Error(text || `Ingestion failed (HTTP ${res.status})`);
       }
 
       if (!res.ok) {
@@ -345,8 +370,8 @@ export default function AdminDashboardPage() {
           <button
             onClick={() => setActiveTab('documents')}
             className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'documents'
-                ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+              ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
           >
             <BookOpen className="w-4 h-4" />
@@ -359,8 +384,8 @@ export default function AdminDashboardPage() {
           <button
             onClick={() => setActiveTab('pending')}
             className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'pending'
-                ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+              ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
           >
             <UserCheck className="w-4 h-4" />
@@ -375,8 +400,8 @@ export default function AdminDashboardPage() {
           <button
             onClick={() => setActiveTab('history')}
             className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'history'
-                ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+              ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
           >
             <History className="w-4 h-4" />
@@ -386,8 +411,8 @@ export default function AdminDashboardPage() {
           <button
             onClick={() => setActiveTab('members')}
             className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'members'
-                ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+              ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
           >
             <Users className="w-4 h-4" />
@@ -400,8 +425,8 @@ export default function AdminDashboardPage() {
           <button
             onClick={() => setActiveTab('invite')}
             className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'invite'
-                ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
+              ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
           >
             <Link2 className="w-4 h-4" />
@@ -504,10 +529,10 @@ export default function AdminDashboardPage() {
                       <div className="flex items-center space-x-4">
                         <span
                           className={`text-xs px-2.5 py-1 rounded-full font-semibold capitalize ${doc.status === 'ready'
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                              : doc.status === 'processing'
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
-                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : doc.status === 'processing'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
+                              : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                             }`}
                         >
                           {doc.status}
@@ -606,8 +631,8 @@ export default function AdminDashboardPage() {
                     key={f}
                     onClick={() => setHistoryFilter(f)}
                     className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${historyFilter === f
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-800 text-slate-400 hover:text-white'
                       }`}
                   >
                     {f}
@@ -634,8 +659,8 @@ export default function AdminDashboardPage() {
 
                     <span
                       className={`text-xs px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${item.status === 'accepted'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                         }`}
                     >
                       {item.status}
@@ -677,8 +702,8 @@ export default function AdminDashboardPage() {
                         <h4 className="text-sm font-semibold text-white">{member.full_name}</h4>
                         <span
                           className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${member.role === 'admin'
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                              : 'bg-slate-800 text-slate-300 border border-white/10'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-slate-800 text-slate-300 border border-white/10'
                             }`}
                         >
                           {member.role}

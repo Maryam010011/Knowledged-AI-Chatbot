@@ -29,48 +29,91 @@ export async function POST(req: Request) {
     const orgId = profile.organization_id;
     const admin = createAdminClient();
 
-    const formData = await req.formData();
-    const file = formData.get('file') as File;
+    const contentType = req.headers.get('content-type') || '';
+    let pdfBuffer: Buffer | null = null;
+    let fileName = '';
+    let storagePath = '';
 
-    if (!file) {
-      return NextResponse.json({ error: 'No PDF file provided' }, { status: 400 });
+    if (contentType.includes('application/json')) {
+      // Direct Storage Ingestion Path (bypasses Vercel 4.5MB payload limit up to 50MB)
+      const body = await req.json();
+      storagePath = body.storagePath;
+      fileName = body.title || 'Coaching Document.pdf';
+
+      if (!storagePath) {
+        return NextResponse.json({ error: 'Missing document storage path' }, { status: 400 });
+      }
+
+      // Security check: Enforce organization path prefix to prevent cross-tenant access
+      if (!storagePath.startsWith(`${orgId}/`)) {
+        return NextResponse.json(
+          { error: 'Security Violation: Storage path does not belong to your academy organization.' },
+          { status: 403 }
+        );
+      }
+
+      // Download file buffer securely using service-role admin client
+      const { data: downloadData, error: downloadError } = await admin.storage
+        .from('coach-documents')
+        .download(storagePath);
+
+      if (downloadError || !downloadData) {
+        return NextResponse.json(
+          { error: `Failed to retrieve document from storage: ${downloadError?.message}` },
+          { status: 400 }
+        );
+      }
+
+      pdfBuffer = Buffer.from(await downloadData.arrayBuffer());
+    } else {
+      // Legacy FormData Upload Path (For files under 4.5MB)
+      const formData = await req.formData();
+      const file = formData.get('file') as File;
+
+      if (!file) {
+        return NextResponse.json({ error: 'No PDF file provided' }, { status: 400 });
+      }
+
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        return NextResponse.json({ error: 'Only PDF documents are supported' }, { status: 400 });
+      }
+
+      const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5 MB
+      if (file.size > MAX_FILE_SIZE) {
+        return NextResponse.json(
+          { error: 'File size exceeds 4.5MB for direct upload. Larger files will be uploaded directly to storage.' },
+          { status: 413 }
+        );
+      }
+
+      fileName = file.name;
+      pdfBuffer = Buffer.from(await file.arrayBuffer());
+      const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      storagePath = `${orgId}/${Date.now()}_${sanitizedName}`;
+
+      // Upload to Supabase Storage
+      const { error: storageError } = await admin.storage
+        .from('coach-documents')
+        .upload(storagePath, pdfBuffer, {
+          contentType: 'application/pdf',
+          upsert: true,
+        });
+
+      if (storageError) {
+        console.warn('Storage upload warning:', storageError.message);
+      }
     }
 
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      return NextResponse.json({ error: 'Only PDF documents are supported' }, { status: 400 });
+    if (!pdfBuffer || pdfBuffer.length === 0) {
+      return NextResponse.json({ error: 'Empty or invalid PDF file buffer' }, { status: 400 });
     }
 
-    const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5 MB
-    if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json(
-        { error: 'File size exceeds the 4.5MB upload limit. Please upload a smaller PDF.' },
-        { status: 413 }
-      );
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `${orgId}/${Date.now()}_${sanitizedName}`;
-
-    // 1. Upload to Supabase Storage
-    const { error: storageError } = await admin.storage
-      .from('coach-documents')
-      .upload(storagePath, buffer, {
-        contentType: 'application/pdf',
-        upsert: true,
-      });
-
-    if (storageError) {
-      console.warn('Storage upload warning:', storageError.message);
-      // Continue anyway if storage bucket policy or setup was not completed, keeping local path
-    }
-
-    // 2. Insert document record with 'processing'
+    // 1. Insert document record with 'processing'
     const { data: docRecord, error: docError } = await admin
       .from('documents')
       .insert({
         organization_id: orgId,
-        title: file.name,
+        title: fileName,
         storage_path: storagePath,
         uploaded_by: user.id,
         status: 'processing',
@@ -82,15 +125,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Failed to create document record: ${docError?.message}` }, { status: 500 });
     }
 
-    // 3. Process PDF: Extract text, chunk, and embed
+    // 2. Process PDF: Extract text, chunk (220 tokens, 40 overlap), and embed (384 dims)
     try {
-      const extracted = await extractTextFromPdfBuffer(buffer);
+      const extracted = await extractTextFromPdfBuffer(pdfBuffer);
 
       if (!extracted.text || extracted.text.trim().length === 0) {
         throw new Error('No readable text found in PDF (file may contain only scanned images without OCR).');
       }
 
-      const chunks = chunkText(extracted.text, 600, 75);
+      const chunks = chunkText(extracted.text, 220, 40);
       if (chunks.length === 0) {
         throw new Error('Could not create chunks from extracted text.');
       }
@@ -106,7 +149,7 @@ export async function POST(req: Request) {
           embedding: embedding,
           metadata: {
             ...chunk.metadata,
-            title: file.name,
+            title: fileName,
             totalPages: extracted.numpages,
           }
         });
@@ -125,7 +168,7 @@ export async function POST(req: Request) {
         }
       }
 
-      // 4. Update status to 'ready'
+      // 3. Update status to 'ready'
       await admin
         .from('documents')
         .update({ status: 'ready' })
