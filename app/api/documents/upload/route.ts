@@ -40,6 +40,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Only PDF documents are supported' }, { status: 400 });
     }
 
+    const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5 MB
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: 'File size exceeds the 4.5MB upload limit. Please upload a smaller PDF.' },
+        { status: 413 }
+      );
+    }
+
     const buffer = Buffer.from(await file.arrayBuffer());
     const sanitizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const storagePath = `${orgId}/${Date.now()}_${sanitizedName}`;
@@ -77,7 +85,7 @@ export async function POST(req: Request) {
     // 3. Process PDF: Extract text, chunk, and embed
     try {
       const extracted = await extractTextFromPdfBuffer(buffer);
-      
+
       if (!extracted.text || extracted.text.trim().length === 0) {
         throw new Error('No readable text found in PDF (file may contain only scanned images without OCR).');
       }

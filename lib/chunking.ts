@@ -13,10 +13,15 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.trim().split(/\s+/).length * 1.33);
 }
 
+/**
+ * Split text into semantic chunks for all-MiniLM-L6-v2 embedding generation.
+ * targetTokenSize defaults to 220 tokens (well within model's optimal window),
+ * preventing token truncation and producing dense, highly focused embeddings.
+ */
 export function chunkText(
   text: string,
-  targetTokenSize: number = 600,
-  tokenOverlap: number = 75
+  targetTokenSize: number = 220,
+  tokenOverlap: number = 40
 ): DocumentChunk[] {
   if (!text || !text.trim()) return [];
 
@@ -35,19 +40,19 @@ export function chunkText(
     const paragraph = rawParagraphs[i];
     const paraTokens = estimateTokens(paragraph);
 
-    // If a single paragraph is enormous, break it into sentences
+    // If a single paragraph is large, break it into sentences
     if (paraTokens > targetTokenSize * 1.2) {
       const sentences = paragraph.split(/(?<=[.?!])\s+/);
       for (const sentence of sentences) {
         const sentenceTokens = estimateTokens(sentence);
         if (currentTokenCount + sentenceTokens > targetTokenSize && currentChunkParagraphs.length > 0) {
-          const chunkText = currentChunkParagraphs.join('\n\n');
+          const chunkStr = currentChunkParagraphs.join('\n\n');
           chunks.push({
-            content: chunkText,
+            content: chunkStr,
             metadata: {
               chunkIndex: chunkIndex++,
-              estimatedTokens: estimateTokens(chunkText),
-              charLength: chunkText.length,
+              estimatedTokens: estimateTokens(chunkStr),
+              charLength: chunkStr.length,
             }
           });
 
@@ -62,13 +67,13 @@ export function chunkText(
     }
 
     if (currentTokenCount + paraTokens > targetTokenSize && currentChunkParagraphs.length > 0) {
-      const chunkText = currentChunkParagraphs.join('\n\n');
+      const chunkStr = currentChunkParagraphs.join('\n\n');
       chunks.push({
-        content: chunkText,
+        content: chunkStr,
         metadata: {
           chunkIndex: chunkIndex++,
-          estimatedTokens: estimateTokens(chunkText),
-          charLength: chunkText.length,
+          estimatedTokens: estimateTokens(chunkStr),
+          charLength: chunkStr.length,
         }
       });
 
@@ -83,13 +88,13 @@ export function chunkText(
 
   // Push remainder
   if (currentChunkParagraphs.length > 0) {
-    const chunkText = currentChunkParagraphs.join('\n\n');
+    const chunkStr = currentChunkParagraphs.join('\n\n');
     chunks.push({
-      content: chunkText,
+      content: chunkStr,
       metadata: {
         chunkIndex: chunkIndex++,
-        estimatedTokens: estimateTokens(chunkText),
-        charLength: chunkText.length,
+        estimatedTokens: estimateTokens(chunkStr),
+        charLength: chunkStr.length,
       }
     });
   }

@@ -158,6 +158,12 @@ export default function AdminDashboardPage() {
       return;
     }
 
+    const MAX_FILE_SIZE = 4.5 * 1024 * 1024; // 4.5MB Vercel serverless request body limit
+    if (file.size > MAX_FILE_SIZE) {
+      setUploadError('File size exceeds the 4.5MB upload limit. Please upload a smaller PDF document.');
+      return;
+    }
+
     setUploading(true);
     setUploadError(null);
 
@@ -170,7 +176,19 @@ export default function AdminDashboardPage() {
         body: formData,
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get('content-type') || '';
+      let data: any = {};
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        throw new Error(
+          res.status === 413
+            ? 'File size exceeds the 4.5MB server upload limit.'
+            : text || `Upload failed (HTTP ${res.status})`
+        );
+      }
+
       if (!res.ok) {
         throw new Error(data.error || 'Failed to process document');
       }
@@ -326,11 +344,10 @@ export default function AdminDashboardPage() {
         <div className="flex flex-wrap border-b border-white/10 gap-2 mb-8">
           <button
             onClick={() => setActiveTab('documents')}
-            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'documents'
+            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'documents'
                 ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <BookOpen className="w-4 h-4" />
             <span>Knowledge Documents</span>
@@ -341,11 +358,10 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => setActiveTab('pending')}
-            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'pending'
+            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'pending'
                 ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <UserCheck className="w-4 h-4" />
             <span>Pending Requests</span>
@@ -358,11 +374,10 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => setActiveTab('history')}
-            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'history'
+            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'history'
                 ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <History className="w-4 h-4" />
             <span>Request History</span>
@@ -370,11 +385,10 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => setActiveTab('members')}
-            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'members'
+            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'members'
                 ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <Users className="w-4 h-4" />
             <span>Academy Members</span>
@@ -385,11 +399,10 @@ export default function AdminDashboardPage() {
 
           <button
             onClick={() => setActiveTab('invite')}
-            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'invite'
+            className={`flex items-center space-x-2 px-4 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${activeTab === 'invite'
                 ? 'border-emerald-500 text-emerald-400 bg-emerald-500/5'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
+              }`}
           >
             <Link2 className="w-4 h-4" />
             <span>Invite Link</span>
@@ -490,13 +503,12 @@ export default function AdminDashboardPage() {
 
                       <div className="flex items-center space-x-4">
                         <span
-                          className={`text-xs px-2.5 py-1 rounded-full font-semibold capitalize ${
-                            doc.status === 'ready'
+                          className={`text-xs px-2.5 py-1 rounded-full font-semibold capitalize ${doc.status === 'ready'
                               ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                               : doc.status === 'processing'
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
-                              : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          }`}
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
+                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            }`}
                         >
                           {doc.status}
                         </span>
@@ -593,11 +605,10 @@ export default function AdminDashboardPage() {
                   <button
                     key={f}
                     onClick={() => setHistoryFilter(f)}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${
-                      historyFilter === f
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize transition-colors ${historyFilter === f
                         ? 'bg-emerald-600 text-white'
                         : 'bg-slate-800 text-slate-400 hover:text-white'
-                    }`}
+                      }`}
                   >
                     {f}
                   </button>
@@ -622,11 +633,10 @@ export default function AdminDashboardPage() {
                     </div>
 
                     <span
-                      className={`text-xs px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${
-                        item.status === 'accepted'
+                      className={`text-xs px-2.5 py-1 rounded-full font-bold uppercase tracking-wider ${item.status === 'accepted'
                           ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                           : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                      }`}
+                        }`}
                     >
                       {item.status}
                     </span>
@@ -666,11 +676,10 @@ export default function AdminDashboardPage() {
                       <div className="flex items-center space-x-2">
                         <h4 className="text-sm font-semibold text-white">{member.full_name}</h4>
                         <span
-                          className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
-                            member.role === 'admin'
+                          className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${member.role === 'admin'
                               ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                               : 'bg-slate-800 text-slate-300 border border-white/10'
-                          }`}
+                            }`}
                         >
                           {member.role}
                         </span>
