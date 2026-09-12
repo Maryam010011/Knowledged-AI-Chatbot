@@ -5,9 +5,10 @@ import { NextResponse } from 'next/server';
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  const next = searchParams.get('next') ?? '/chat';
+  const token_hash = searchParams.get('token_hash');
+  const type = searchParams.get('type');
 
-  if (code) {
+  if (code || (token_hash && type)) {
     const cookieStore = cookies();
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -27,21 +28,33 @@ export async function GET(request: Request) {
       }
     );
 
-    const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error && sessionData?.user) {
-      // Check user role
+    let authUser = null;
+
+    if (code) {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      if (!error && data?.user) authUser = data.user;
+    } else if (token_hash && type) {
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash,
+        type: type as any,
+      });
+      if (!error && data?.user) authUser = data.user;
+    }
+
+    if (authUser) {
+      // Check user role from database
       const { data: profile } = await supabase
         .from('profiles')
         .select('role, organization_id')
-        .eq('id', sessionData.user.id)
+        .eq('id', authUser.id)
         .single();
 
       if (profile?.role === 'admin') {
         return NextResponse.redirect(`${origin}/admin`);
-      } else if (profile?.role === 'member') {
+      } else if (profile?.role === 'member' && profile.organization_id) {
         return NextResponse.redirect(`${origin}/chat`);
       } else {
-        return NextResponse.redirect(`${origin}/waiting?email=${encodeURIComponent(sessionData.user.email || '')}`);
+        return NextResponse.redirect(`${origin}/waiting?email=${encodeURIComponent(authUser.email || '')}`);
       }
     }
   }

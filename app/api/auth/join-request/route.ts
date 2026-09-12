@@ -81,11 +81,11 @@ export async function POST(req: Request) {
 
       const userId = authData?.user?.id;
       if (userId) {
-        // Create initial profile without role approval yet
+        // Create initial profile: role is strictly 'member', organization_id is NULL until coach approves invite
         await adminClient.from('profiles').upsert({
           id: userId,
-          organization_id: org.id,
-          role: 'member', // will be gated by invite_requests status
+          organization_id: null,
+          role: 'member',
           full_name: fullName || '',
         });
       }

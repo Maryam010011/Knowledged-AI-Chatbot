@@ -71,3 +71,54 @@ export async function callGroqChatCompletion({
 
   return content;
 }
+
+export async function reformulateFollowUpQuery({
+  message,
+  history,
+}: {
+  message: string;
+  history: { role: 'user' | 'assistant'; content: string }[];
+}): Promise<string> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || history.length === 0) {
+    return message;
+  }
+
+  try {
+    const prompt = [
+      {
+        role: 'system',
+        content:
+          'You are a search query reformulator for a cricket coaching knowledge base. Given the conversation history, rewrite the user latest follow-up question into a standalone, concise keyword search query for vector retrieval. If the query is already standalone or off-topic, output it as-is. Output ONLY the standalone query, nothing else.'
+      },
+      ...history.slice(-4),
+      { role: 'user', content: message }
+    ];
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3.8-27b',
+        messages: prompt,
+        temperature: 0.1,
+        max_tokens: 80,
+      }),
+    });
+
+    if (!response.ok) return message;
+    const data = await response.json();
+    const result = data.choices?.[0]?.message?.content;
+    if (result && result.trim().length > 0) {
+      return result.trim().replace(/^["']|["']$/g, '');
+    }
+    return message;
+  } catch (err) {
+    console.error('Error reformulating query:', err);
+    return message;
+  }
+}
+

@@ -69,6 +69,9 @@ export async function POST(req: Request) {
       });
 
     if (profileError) {
+      // rollback organization and user
+      await adminClient.from('organizations').delete().eq('id', orgData.id);
+      await adminClient.auth.admin.deleteUser(userId);
       return NextResponse.json(
         { error: `Database error creating profile: ${profileError?.message}` },
         { status: 500 }

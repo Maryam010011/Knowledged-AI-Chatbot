@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateEmbedding } from '@/lib/embeddings';
-import { callGroqChatCompletion } from '@/lib/groq';
+import { callGroqChatCompletion, reformulateFollowUpQuery } from '@/lib/groq';
 
 export const maxDuration = 60;
 
@@ -79,17 +79,39 @@ export async function POST(req: Request) {
       activeConversationId = newConv.id;
     }
 
-    // 2. Save user message to database
+    // 2. Retrieve recent conversation history (last 6 messages) BEFORE saving current message
+    const { data: rawHistory } = await admin
+      .from('messages')
+      .select('role, content')
+      .eq('conversation_id', activeConversationId)
+      .order('created_at', { ascending: true })
+      .limit(6);
+
+    const historyMessages = (rawHistory || []).map((m: any) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }));
+
+    // 3. Contextual Query Reformulation for follow-ups
+    let searchTargetQuery = message;
+    if (historyMessages.length > 0) {
+      searchTargetQuery = await reformulateFollowUpQuery({
+        message,
+        history: historyMessages,
+      });
+    }
+
+    // 4. Save user message to database
     await admin.from('messages').insert({
       conversation_id: activeConversationId,
       role: 'user',
       content: message,
     });
 
-    // 3. Generate query embedding locally with Transformers.js (384 dims, all-MiniLM-L6-v2)
-    const queryEmbedding = await generateEmbedding(message);
+    // 5. Generate query embedding locally with Transformers.js (384 dims, all-MiniLM-L6-v2)
+    const queryEmbedding = await generateEmbedding(searchTargetQuery);
 
-    // 4. Vector similarity search against document_chunks via RPC function
+    // 6. Vector similarity search against document_chunks via RPC function strictly for user's organization
     const { data: matchingChunks, error: matchError } = await admin.rpc(
       'match_document_chunks',
       {
@@ -110,28 +132,45 @@ export async function POST(req: Request) {
     let assistantReply = '';
     let sources: any[] = [];
 
-    // 5. THRESHOLD CHECK & CASE SEPARATION
+    // 7. THRESHOLD CHECK & CASE SEPARATION
     if (validChunks.length === 0 || bestSimilarity < SIMILARITY_THRESHOLD) {
-      // CASE B: Out of domain or no relevant context found -> Fallback only, ZERO citations
-      assistantReply = DECLINE_MESSAGE;
-      sources = [];
+      // Check if this is a follow-up directly asking about or formatting the prior assistant response
+      const lastAssistantMsg = historyMessages.filter(m => m.role === 'assistant').pop();
+      const isRefiningPriorAnswer =
+        lastAssistantMsg &&
+        !lastAssistantMsg.content.includes("I can only answer questions using the cricket coaching articles") &&
+        (message.toLowerCase().includes('summarize') ||
+          message.toLowerCase().includes('bullet point') ||
+          message.toLowerCase().includes('simplify') ||
+          message.toLowerCase().includes('explain further') ||
+          message.toLowerCase().includes('clarify'));
+
+      if (isRefiningPriorAnswer) {
+        const formattedHistoryWithCurrent = [
+          ...historyMessages,
+          { role: 'user' as const, content: message },
+        ];
+        const rawReply = await callGroqChatCompletion({
+          messages: formattedHistoryWithCurrent,
+          contextChunks: [],
+        });
+        assistantReply = sanitizeAssistantReply(rawReply);
+        sources = [];
+      } else {
+        // CASE B: Out of domain or no relevant context found -> Fallback only, ZERO citations
+        assistantReply = DECLINE_MESSAGE;
+        sources = [];
+      }
     } else {
       // CASE A: Relevant context found above 0.5 threshold -> Generate answer & citations
-      const { data: prevMessages } = await admin
-        .from('messages')
-        .select('role, content')
-        .eq('conversation_id', activeConversationId)
-        .order('created_at', { ascending: true })
-        .limit(6);
-
-      const formattedHistory = (prevMessages || []).map((m: any) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      }));
+      const formattedHistoryWithCurrent = [
+        ...historyMessages,
+        { role: 'user' as const, content: message },
+      ];
 
       const contextTexts = validChunks.map((c: any) => c.content);
       const rawReply = await callGroqChatCompletion({
-        messages: formattedHistory,
+        messages: formattedHistoryWithCurrent,
         contextChunks: contextTexts,
       });
 
@@ -147,7 +186,7 @@ export async function POST(req: Request) {
       }));
     }
 
-    // 6. Save assistant reply to database
+    // 8. Save assistant reply to database
     const { data: savedReply } = await admin
       .from('messages')
       .insert({

@@ -173,6 +173,9 @@ export default function ChatPage() {
       ]);
     } finally {
       setSending(false);
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
     }
   };
 

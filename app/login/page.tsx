@@ -31,7 +31,16 @@ export default function LoginPage() {
           },
         });
         if (otpError) {
-          throw new Error(`Error sending magic link email: ${otpError.message}. Please use password sign-in instead.`);
+          const isEmailProviderIssue =
+            otpError.message.toLowerCase().includes('email') ||
+            otpError.message.toLowerCase().includes('magic link') ||
+            (otpError as any).status === 500;
+          if (isEmailProviderIssue) {
+            throw new Error(
+              `Magic Link delivery error: Supabase email service is currently rate-limited or requires custom SMTP setup in the Supabase Dashboard. Please use Password sign-in instead.`
+            );
+          }
+          throw new Error(`Magic link error: ${otpError.message}`);
         }
         setMagicLinkSent(true);
         return;
@@ -69,7 +78,7 @@ export default function LoginPage() {
           .limit(1)
           .single();
 
-        if (req?.status === 'accepted' || profile.organization_id) {
+        if (req?.status === 'accepted' && profile.organization_id) {
           router.push('/chat');
         } else {
           router.push(`/waiting?email=${encodeURIComponent(data.user.email || '')}`);
@@ -84,12 +93,8 @@ export default function LoginPage() {
           .limit(1)
           .single();
 
-        if (req?.status === 'accepted') {
+        if (req?.status === 'accepted' && profile?.organization_id) {
           router.push('/chat');
-        } else if (req?.status === 'pending') {
-          router.push(`/waiting?email=${encodeURIComponent(data.user.email || '')}`);
-        } else if (profileError) {
-          setError(`Authentication succeeded, but failed to load user profile (${profileError.message}). Please contact support.`);
         } else {
           router.push(`/waiting?email=${encodeURIComponent(data.user.email || '')}`);
         }
@@ -212,11 +217,19 @@ export default function LoginPage() {
             </form>
           )}
 
-          <div className="mt-6 text-center text-xs text-slate-400">
-            Coach setting up a new academy?{' '}
-            <Link href="/signup" className="text-emerald-400 hover:underline font-medium">
-              Create Academy
-            </Link>
+          <div className="mt-6 text-center text-xs text-slate-400 space-y-2">
+            <div>
+              Coach setting up a new academy?{' '}
+              <Link href="/signup" className="text-emerald-400 hover:underline font-medium">
+                Create Academy
+              </Link>
+            </div>
+            <div>
+              Player invited to join an academy?{' '}
+              <Link href="/join" className="text-emerald-400 hover:underline font-medium">
+                Join with Invite Code
+              </Link>
+            </div>
           </div>
         </div>
       </div>

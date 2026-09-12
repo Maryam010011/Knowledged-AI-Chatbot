@@ -24,10 +24,16 @@ export default function HomePage() {
               Sign In
             </Link>
             <Link
+              href="/join"
+              className="text-sm font-medium text-emerald-400 hover:text-emerald-300 transition-colors px-3 py-2"
+            >
+              Join Academy
+            </Link>
+            <Link
               href="/signup"
               className="text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg shadow-md shadow-emerald-700/20 transition-all hover:scale-[1.02]"
             >
-              Coach Registration
+              Create an Academy
             </Link>
           </div>
         </div>
@@ -48,20 +54,31 @@ export default function HomePage() {
           A private, multi-tenant AI coaching assistant for cricket academies. Answers exclusively from verified coach-uploaded documents, research, and technique drills.
         </p>
 
+        {/* Dual Onboarding Paths */}
         <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
           <Link
             href="/signup"
             className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 px-7 py-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-base shadow-xl shadow-emerald-900/40 transition-all hover:scale-[1.02]"
           >
-            <span>Set Up Your Academy</span>
+            <span>Create an Academy (Coach)</span>
             <ArrowRight className="w-4 h-4" />
           </Link>
           <Link
-            href="/login"
-            className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 px-7 py-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-white/10 text-slate-200 font-semibold text-base transition-all hover:scale-[1.02]"
+            href="/join"
+            className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 px-7 py-3.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-emerald-500/30 text-emerald-300 font-semibold text-base transition-all hover:scale-[1.02]"
           >
-            <span>Member Sign In</span>
+            <span>Join an Academy (Member)</span>
+            <ArrowRight className="w-4 h-4" />
           </Link>
+        </div>
+
+        <div className="mt-4">
+          <span className="text-xs text-slate-400">
+            Already have an account?{' '}
+            <Link href="/login" className="text-emerald-400 hover:underline font-medium">
+              Sign In here
+            </Link>
+          </span>
         </div>
 
         {/* Feature Highlights Grid */}
