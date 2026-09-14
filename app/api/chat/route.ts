@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateEmbedding } from '@/lib/embeddings';
-import { callGroqChatCompletion, reformulateFollowUpQuery } from '@/lib/groq';
+import {
+  callGroqChatCompletion,
+  reformulateFollowUpQuery,
+  generateFallbackWithCounterQuestion,
+} from '@/lib/groq';
 
 export const maxDuration = 60;
 
@@ -157,8 +161,15 @@ export async function POST(req: Request) {
         assistantReply = sanitizeAssistantReply(rawReply);
         sources = [];
       } else {
-        // CASE B: Out of domain or no relevant context found -> Fallback only, ZERO citations
-        assistantReply = DECLINE_MESSAGE;
+        // CASE B: Out of domain or no relevant context found -> Refusal + counter-question in user's language, ZERO citations
+        const formattedHistoryWithCurrent = [
+          ...historyMessages,
+          { role: 'user' as const, content: message },
+        ];
+        assistantReply = await generateFallbackWithCounterQuestion({
+          message,
+          history: formattedHistoryWithCurrent,
+        });
         sources = [];
       }
     } else {
