@@ -37,6 +37,7 @@ export default function AdminDashboardPage() {
   const [documents, setDocuments] = useState<any[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [processingDocs, setProcessingDocs] = useState<{ [docId: string]: { processed: number; total: number; stage: string } }>({});
 
   // Invites state
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
@@ -220,10 +221,114 @@ export default function AdminDashboardPage() {
 
       await fetchDocuments();
       if (fileInputRef.current) fileInputRef.current.value = '';
+
+      // If document has remaining chunks, run the batch ingestion loop
+      if (!data.done && data.documentId) {
+        await runBatchIngestion(data.documentId, data.totalChunks, data.processedChunks || 0);
+      }
     } catch (err: any) {
       setUploadError(err.message || 'Upload error');
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Run sequential batch ingestion for large documents
+  const runBatchIngestion = async (documentId: string, totalCount?: number, startCount: number = 0) => {
+    let done = false;
+    let currentTotal = totalCount || 0;
+    let currentProcessed = startCount;
+
+    setProcessingDocs((prev) => ({
+      ...prev,
+      [documentId]: { processed: currentProcessed, total: currentTotal, stage: 'embedding' },
+    }));
+
+    try {
+      while (!done) {
+        const res = await fetch('/api/documents/process-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documentId, batchSize: 25 }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || 'Batch processing encountered an error');
+        }
+
+        const batchData = await res.json();
+        currentTotal = batchData.totalChunks || currentTotal;
+        currentProcessed = batchData.processedChunks || currentProcessed;
+        done = batchData.done || batchData.status === 'ready';
+
+        setProcessingDocs((prev) => ({
+          ...prev,
+          [documentId]: { processed: currentProcessed, total: currentTotal, stage: done ? 'done' : 'embedding' },
+        }));
+
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === documentId
+              ? {
+                  ...d,
+                  status: done ? 'ready' : 'processing',
+                  chunkCount: currentProcessed,
+                }
+              : d
+          )
+        );
+      }
+    } catch (err: any) {
+      console.error('Batch ingestion loop failed:', err);
+      setUploadError(`Batch ingestion error: ${err.message}`);
+      setDocuments((prev) =>
+        prev.map((d) => (d.id === documentId ? { ...d, status: 'failed' } : d))
+      );
+    } finally {
+      setProcessingDocs((prev) => {
+        const next = { ...prev };
+        delete next[documentId];
+        return next;
+      });
+      await fetchDocuments();
+    }
+  };
+
+  // Re-trigger Ingestion for a Failed or Stuck Document
+  const handleRetryDocument = async (documentId: string, title: string) => {
+    setUploadError(null);
+    setProcessingDocs((prev) => ({
+      ...prev,
+      [documentId]: { processed: 0, total: 0, stage: 'preparing' },
+    }));
+    setDocuments((prev) =>
+      prev.map((d) => (d.id === documentId ? { ...d, status: 'processing', chunkCount: 0 } : d))
+    );
+
+    try {
+      const res = await fetch('/api/documents/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentId }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to re-initialize document for ingestion');
+      }
+
+      const data = await res.json();
+      await runBatchIngestion(documentId, data.totalChunks, 0);
+    } catch (err: any) {
+      console.error('Retry failed:', err);
+      setUploadError(`Failed to retry "${title}": ${err.message}`);
+      setProcessingDocs((prev) => {
+        const next = { ...prev };
+        delete next[documentId];
+        return next;
+      });
+      await fetchDocuments();
     }
   };
 
@@ -526,17 +631,40 @@ export default function AdminDashboardPage() {
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-4">
-                        <span
-                          className={`text-xs px-2.5 py-1 rounded-full font-semibold capitalize ${doc.status === 'ready'
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            : doc.status === 'processing'
-                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
-                              : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                            }`}
-                        >
-                          {doc.status}
-                        </span>
+                      <div className="flex items-center space-x-3">
+                        {processingDocs[doc.id] ? (
+                          <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center space-x-1.5 animate-pulse">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>
+                              {processingDocs[doc.id].total > 0
+                                ? `${Math.round((processingDocs[doc.id].processed / processingDocs[doc.id].total) * 100)}% (${processingDocs[doc.id].processed}/${processingDocs[doc.id].total})`
+                                : 'Preparing...'}
+                            </span>
+                          </span>
+                        ) : (
+                          <span
+                            className={`text-xs px-2.5 py-1 rounded-full font-semibold capitalize ${doc.status === 'ready'
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : doc.status === 'processing'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
+                                : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                              }`}
+                          >
+                            {doc.status}
+                          </span>
+                        )}
+
+                        {(doc.status === 'failed' || doc.status === 'processing') && (
+                          <button
+                            onClick={() => handleRetryDocument(doc.id, doc.title)}
+                            disabled={!!processingDocs[doc.id]}
+                            title="Retry ingestion for this document"
+                            className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${processingDocs[doc.id] ? 'animate-spin' : ''}`} />
+                            <span className="hidden sm:inline">{processingDocs[doc.id] ? 'Ingesting...' : 'Retry'}</span>
+                          </button>
+                        )}
 
                         <button
                           onClick={() => handleDeleteDocument(doc.id, doc.title)}

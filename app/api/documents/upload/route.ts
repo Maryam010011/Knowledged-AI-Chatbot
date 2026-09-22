@@ -1,11 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { extractTextFromPdfBuffer } from '@/lib/pdf';
-import { chunkText } from '@/lib/chunking';
-import { generateEmbedding } from '@/lib/embeddings';
+import { prepareDocumentJob, processDocumentBatch, failDocument } from '@/lib/ingestion';
 
-export const maxDuration = 60; // Allow sufficient time for PDF parsing & embedding
+export const maxDuration = 60; // Allow sufficient time for PDF parsing & initial batch
 
 export async function POST(req: Request) {
   try {
@@ -125,71 +123,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Failed to create document record: ${docError?.message}` }, { status: 500 });
     }
 
-    // 2. Process PDF: Extract text, chunk (220 tokens, 40 overlap), and embed (384 dims)
+    // 2. Prepare chunking job and process initial batch (e.g. 25 chunks)
     try {
-      const extracted = await extractTextFromPdfBuffer(pdfBuffer);
-
-      if (!extracted.text || extracted.text.trim().length === 0) {
-        throw new Error('No readable text found in PDF (file may contain only scanned images without OCR).');
-      }
-
-      const chunks = chunkText(extracted.text, 220, 40);
-      if (chunks.length === 0) {
-        throw new Error('Could not create chunks from extracted text.');
-      }
-
-      // Generate embeddings and build rows
-      const chunkRows = [];
-      for (const chunk of chunks) {
-        const embedding = await generateEmbedding(chunk.content);
-        chunkRows.push({
-          document_id: docRecord.id,
-          organization_id: orgId,
-          content: chunk.content,
-          embedding: embedding,
-          metadata: {
-            ...chunk.metadata,
-            title: fileName,
-            totalPages: extracted.numpages,
-          }
-        });
-      }
-
-      // Batch insert chunks in batches of 50
-      const batchSize = 50;
-      for (let i = 0; i < chunkRows.length; i += batchSize) {
-        const batch = chunkRows.slice(i, i + batchSize);
-        const { error: insertChunksError } = await admin
-          .from('document_chunks')
-          .insert(batch);
-
-        if (insertChunksError) {
-          throw new Error(`Failed to insert chunks batch: ${insertChunksError.message}`);
-        }
-      }
-
-      // 3. Update status to 'ready'
-      await admin
-        .from('documents')
-        .update({ status: 'ready' })
-        .eq('id', docRecord.id);
+      const job = await prepareDocumentJob(docRecord.id, admin);
+      const batchResult = await processDocumentBatch(docRecord.id, 25, admin);
 
       return NextResponse.json({
         success: true,
         documentId: docRecord.id,
         title: docRecord.title,
-        chunksCount: chunks.length,
+        totalChunks: job.totalChunks,
+        processedChunks: batchResult.processedChunks,
+        done: batchResult.done,
+        status: batchResult.status,
       });
     } catch (ingestError: any) {
-      console.error('Document ingestion error:', ingestError);
-      await admin
-        .from('documents')
-        .update({ status: 'failed' })
-        .eq('id', docRecord.id);
+      await failDocument(docRecord.id, ingestError, admin);
 
       return NextResponse.json({
         error: ingestError.message || 'Error processing document content',
         documentId: docRecord.id,
+        status: 'failed',
       }, { status: 500 });
     }
   } catch (error: any) {

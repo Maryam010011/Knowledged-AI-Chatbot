@@ -19,6 +19,8 @@ import {
   FileText,
   AlertCircle
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface ChatMessage {
   id?: string;
@@ -373,7 +375,55 @@ export default function ChatPage() {
                   }`}
                 >
                   {/* Message content */}
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                  {msg.role === 'user' ? (
+                    <div className="whitespace-pre-wrap">{msg.content}</div>
+                  ) : (
+                    <div className="text-sm leading-relaxed text-slate-200">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          h1: ({ node, ...props }) => <h1 className="text-xl font-bold text-white mt-4 mb-2 first:mt-0" {...props} />,
+                          h2: ({ node, ...props }) => <h2 className="text-lg font-bold text-white mt-3.5 mb-2 first:mt-0" {...props} />,
+                          h3: ({ node, ...props }) => <h3 className="text-base font-semibold text-emerald-400 mt-3 mb-1.5 first:mt-0" {...props} />,
+                          h4: ({ node, ...props }) => <h4 className="text-sm font-semibold text-emerald-300 mt-2.5 mb-1 first:mt-0" {...props} />,
+                          p: ({ node, ...props }) => <p className="mb-2.5 last:mb-0 leading-relaxed text-slate-200" {...props} />,
+                          ul: ({ node, ...props }) => <ul className="list-disc list-outside pl-5 mb-2.5 space-y-1 text-slate-200" {...props} />,
+                          ol: ({ node, ...props }) => <ol className="list-decimal list-outside pl-5 mb-2.5 space-y-1 text-slate-200" {...props} />,
+                          li: ({ node, ...props }) => <li className="leading-relaxed pl-0.5" {...props} />,
+                          strong: ({ node, ...props }) => <strong className="font-semibold text-white" {...props} />,
+                          em: ({ node, ...props }) => <em className="italic text-slate-200" {...props} />,
+                          blockquote: ({ node, ...props }) => (
+                            <blockquote className="border-l-2 border-emerald-500/70 pl-3.5 py-1 my-2.5 text-slate-300 italic bg-emerald-500/5 rounded-r-lg" {...props} />
+                          ),
+                          code: ({ node, inline, className, children, ...props }: any) => {
+                            return inline ? (
+                              <code className="px-1.5 py-0.5 rounded bg-slate-800 font-mono text-xs text-emerald-300 border border-white/10" {...props}>
+                                {children}
+                              </code>
+                            ) : (
+                              <pre className="p-3 my-2.5 rounded-xl bg-slate-950/80 border border-white/10 overflow-x-auto text-xs font-mono text-emerald-300">
+                                <code {...props}>{children}</code>
+                              </pre>
+                            );
+                          },
+                          table: ({ node, ...props }) => (
+                            <div className="overflow-x-auto my-3 rounded-xl border border-white/10">
+                              <table className="w-full text-left text-xs border-collapse" {...props} />
+                            </div>
+                          ),
+                          thead: ({ node, ...props }) => <thead className="bg-slate-800/80 text-emerald-300 uppercase font-semibold text-[11px]" {...props} />,
+                          th: ({ node, ...props }) => <th className="p-2.5 border-b border-white/10 font-semibold" {...props} />,
+                          td: ({ node, ...props }) => <td className="p-2.5 border-b border-white/5 text-slate-300" {...props} />,
+                          hr: ({ node, ...props }) => <hr className="my-4 border-white/10" {...props} />,
+                          a: ({ node, ...props }) => (
+                            <a className="text-emerald-400 hover:text-emerald-300 underline underline-offset-2" target="_blank" rel="noopener noreferrer" {...props} />
+                          ),
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+                  )}
 
                   {/* Retrieved Sources & Grounding Details */}
                   {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
