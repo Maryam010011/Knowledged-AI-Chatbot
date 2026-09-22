@@ -546,9 +546,29 @@ export default function ChatPage() {
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask about batting technique, bowling action, fielding drills..."
+              placeholder={listening ? 'Listening… speak your question' : 'Ask about batting technique, bowling action, fielding drills...'}
               className="flex-1 bg-transparent resize-none px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none max-h-32 min-h-[40px]"
             />
+
+            {/* Mic Button — hidden if browser doesn't support Web Speech API */}
+            {isSpeechSupported && (
+              <button
+                type="button"
+                onClick={handleToggleListening}
+                title={listening ? 'Stop recording' : 'Start voice input'}
+                className={`relative p-2.5 rounded-xl flex-shrink-0 transition-all cursor-pointer ${
+                  listening
+                    ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-700/30'
+                    : 'bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white border border-white/10'
+                }`}
+              >
+                {/* Pulsing ring while listening */}
+                {listening && (
+                  <span className="absolute inset-0 rounded-xl animate-ping bg-rose-500/40" />
+                )}
+                {listening ? <MicOff className="w-4 h-4 relative z-10" /> : <Mic className="w-4 h-4" />}
+              </button>
+            )}
 
             <button
               type="submit"
@@ -558,6 +578,14 @@ export default function ChatPage() {
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>
           </form>
+
+          {/* Listening indicator below the form */}
+          {listening && (
+            <div className="max-w-4xl mx-auto mt-2 flex items-center space-x-2 text-[11px] text-rose-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+              <span>Listening in English… speak now, then review before sending</span>
+            </div>
+          )}
 
           <p className="text-[11px] text-center text-slate-500 mt-2">
             Cricket Coaching AI only answers using uploaded academy materials. Non-cricket queries are strictly declined.
