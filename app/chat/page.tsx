@@ -1,5 +1,6 @@
 'use client';
 
+import 'regenerator-runtime/runtime';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -17,10 +18,13 @@ import {
   Sparkles,
   Loader2,
   FileText,
-  AlertCircle
+  AlertCircle,
+  Mic,
+  MicOff
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 
 interface ChatMessage {
   id?: string;
@@ -44,6 +48,42 @@ export default function ChatPage() {
   const [inputMessage, setInputMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [activeSources, setActiveSources] = useState<{ [msgIndex: number]: boolean }>({});
+
+  // Voice Input Speech Recognition
+  const {
+    transcript,
+    listening,
+    resetTranscript,
+  } = useSpeechRecognition();
+  const [isSpeechSupported, setIsSpeechSupported] = useState(false);
+  const [textBeforeSpeech, setTextBeforeSpeech] = useState('');
+
+  // Check browser support on mount (prevents SSR hydration mismatch)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsSpeechSupported(SpeechRecognition.browserSupportsSpeechRecognition());
+    }
+  }, []);
+
+  // Update input text in real time with interim/final transcript while listening
+  useEffect(() => {
+    if (listening && transcript) {
+      setInputMessage(`${textBeforeSpeech}${transcript}`);
+    }
+  }, [transcript, listening, textBeforeSpeech]);
+
+  const handleToggleListening = () => {
+    if (listening) {
+      SpeechRecognition.stopListening();
+    } else {
+      setTextBeforeSpeech(inputMessage ? inputMessage.trimEnd() + ' ' : '');
+      resetTranscript();
+      SpeechRecognition.startListening({
+        continuous: true,
+        language: 'en-US',
+      });
+    }
+  };
 
   // 1. Authenticate user & load conversations
   useEffect(() => {
@@ -131,6 +171,11 @@ export default function ChatPage() {
     const query = inputMessage.trim();
     if (!query || sending) return;
 
+    if (listening) {
+      SpeechRecognition.stopListening();
+    }
+    resetTranscript();
+    setTextBeforeSpeech('');
     setInputMessage('');
     const tempUserMsg: ChatMessage = { role: 'user', content: query };
     setMessages(prev => [...prev, tempUserMsg]);
